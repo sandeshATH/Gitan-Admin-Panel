@@ -45,6 +45,7 @@ async function ensureDataFile() {
 }
 
 async function acquireLock(retries = 20, delay = 100) {
+  const staleMs = 5_000; // consider locks older than 5s stale
   for (let i = 0; i < retries; i++) {
     try {
       const handle = await fs.open(lockFile, "wx");
@@ -54,11 +55,26 @@ async function acquireLock(retries = 20, delay = 100) {
         await handle.close();
       }
       return;
-    } catch (_err) {
-      await new Promise((res) => setTimeout(res, delay));
+    } catch (err) {
+      // If lock exists, check if it's stale and remove it
+      try {
+        const stat = await fs.stat(lockFile);
+        const age = Date.now() - stat.mtimeMs;
+        if (age > staleMs) {
+          await fs.unlink(lockFile);
+          // try immediately again
+          continue;
+        }
+      } catch (_statErr) {
+        // ignore stat errors and fall through to wait
+      }
+
+      // exponential backoff with jitter
+      const wait = delay * Math.min(1 << i, 8) + Math.floor(Math.random() * 50);
+      await new Promise((res) => setTimeout(res, wait));
     }
   }
-  throw new Error("Could not acquire file lock for clients data.");
+  throw new Error("Could not acquire file lock for clients data. Try again later.");
 }
 
 async function releaseLock() {
@@ -191,14 +207,38 @@ export async function addClient(input: ClientInput) {
 }
 
 export async function removeClient(id: string) {
-  const clients = await readClients();
-  const updated = clients.filter((client) => client.id !== id);
-  const removed = updated.length !== clients.length;
+  await acquireLock();
+  try {
+    await ensureDataFile();
+    const raw = await fs.readFile(clientsFile, "utf-8");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (parseErr) {
+      // If the file is corrupted, attempt to recover with an empty list
+      console.error("clients.json corrupted, recovering to empty array", parseErr);
+      parsed = [];
+    }
 
-  if (!removed) {
-    return { removed: false };
+    let arr: unknown[] = [];
+    if (Array.isArray(parsed)) {
+      arr = parsed as unknown[];
+    }
+
+    const clients: ClientRecord[] = arr
+      .map((item: unknown) => normalizeClient(item))
+      .filter((item): item is ClientRecord => Boolean(item));
+
+    const updated = clients.filter((client) => client.id !== id);
+    const removed = updated.length !== clients.length;
+
+    if (!removed) {
+      return { removed: false };
+    }
+
+    await writeClients(updated);
+    return { removed: true };
+  } finally {
+    await releaseLock();
   }
-
-  await writeClients(updated);
-  return { removed: true };
 }
