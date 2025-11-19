@@ -1,12 +1,17 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { addClient, readClients, removeClient } from "@/lib/clients";
+import type { ClientRecord } from "@/lib/clients";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
     const clients = await readClients();
-    const safe = clients.map(({ password, ...rest }) => rest);
+    const safe = clients.map((c) => {
+      const { password, ...rest } = c;
+      void password;
+      return rest;
+    });
     return NextResponse.json({ clients: safe });
   } catch (error) {
     console.error("Failed to load clients", error);
@@ -21,7 +26,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const client = await addClient(body);
-    const { password, ...safeClient } = client as any;
+    const { password, ...safeClient } = client as ClientRecord;
+    void password;
     return NextResponse.json({ client: safeClient }, { status: 201 });
   } catch (error) {
     const message =

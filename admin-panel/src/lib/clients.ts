@@ -54,7 +54,7 @@ async function acquireLock(retries = 20, delay = 100) {
         await handle.close();
       }
       return;
-    } catch (err) {
+    } catch (_err) {
       await new Promise((res) => setTimeout(res, delay));
     }
   }
@@ -64,7 +64,7 @@ async function acquireLock(retries = 20, delay = 100) {
 async function releaseLock() {
   try {
     await fs.unlink(lockFile);
-  } catch (err) {
+  } catch (_err) {
     // ignore
   }
 }
