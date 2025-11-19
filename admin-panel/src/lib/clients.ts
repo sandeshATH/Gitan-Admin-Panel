@@ -1,6 +1,7 @@
 ﻿import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
 import { PLAN_OPTIONS, STATUS_OPTIONS, type ClientPlan, type ClientStatus } from "./client-options";
 
 export type { ClientPlan, ClientStatus };
@@ -32,6 +33,7 @@ export type ClientInput = {
 
 const dataDir = path.join(process.cwd(), "data");
 const clientsFile = path.join(dataDir, "clients.json");
+const lockFile = `${clientsFile}.lock`;
 
 async function ensureDataFile() {
   await fs.mkdir(dataDir, { recursive: true });
@@ -39,6 +41,31 @@ async function ensureDataFile() {
     await fs.access(clientsFile);
   } catch {
     await fs.writeFile(clientsFile, "[]", "utf-8");
+  }
+}
+
+async function acquireLock(retries = 20, delay = 100) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const handle = await fs.open(lockFile, "wx");
+      try {
+        await handle.writeFile(String(process.pid));
+      } finally {
+        await handle.close();
+      }
+      return;
+    } catch (err) {
+      await new Promise((res) => setTimeout(res, delay));
+    }
+  }
+  throw new Error("Could not acquire file lock for clients data.");
+}
+
+async function releaseLock() {
+  try {
+    await fs.unlink(lockFile);
+  } catch (err) {
+    // ignore
   }
 }
 
@@ -105,11 +132,14 @@ export async function readClients(): Promise<ClientRecord[]> {
 
 async function writeClients(clients: ClientRecord[]) {
   await ensureDataFile();
-  await fs.writeFile(
-    clientsFile,
-    JSON.stringify(clients, null, 2),
-    "utf-8"
-  );
+  await acquireLock();
+  const tmp = `${clientsFile}.tmp`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(clients, null, 2), "utf-8");
+    await fs.rename(tmp, clientsFile);
+  } finally {
+    await releaseLock();
+  }
 }
 
 export async function addClient(input: ClientInput) {
@@ -149,7 +179,7 @@ export async function addClient(input: ClientInput) {
     phone,
     plan,
     status,
-    password,
+    password: bcrypt.hashSync(password, 10),
     notes,
     createdAt: now,
     updatedAt: now,

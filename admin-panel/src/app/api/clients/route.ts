@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const clients = await readClients();
-    return NextResponse.json({ clients });
+    const safe = clients.map(({ password, ...rest }) => rest);
+    return NextResponse.json({ clients: safe });
   } catch (error) {
     console.error("Failed to load clients", error);
     return NextResponse.json(
@@ -20,7 +21,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const client = await addClient(body);
-    return NextResponse.json({ client }, { status: 201 });
+    const { password, ...safeClient } = client as any;
+    return NextResponse.json({ client: safeClient }, { status: 201 });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unable to add client.";
