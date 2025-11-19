@@ -1,11 +1,11 @@
 # Gitan Admin Panel
 
-A production-ready Next.js 15 dashboard for GitanAI operators to capture, audit, and maintain client credentials, plan assignments, onboarding status, and internal notes. The UI is optimized for success/engineering teams working together in real time while the backend keeps secrets encrypted at rest.
+A production-ready Next.js 15 dashboard for GitanAI operators to capture, audit, and maintain client credentials, plan assignments, onboarding status, and internal notes. The UI is optimized for success/engineering teams working together in real time while the backend keeps secrets encrypted at rest in Postgres.
 
 ## Tech Stack
 - Next.js 15 (App Router) + React 19 client dashboard
 - Tailwind CSS 4 for theming
-- File-based persistence with optimistic locking and AES-256-GCM encryption
+- Vercel Postgres (or any Postgres-compatible DB) with AES-256-GCM encryption for secrets
 - TypeScript end-to-end for shared domain contracts
 
 ## Quick Start
@@ -13,7 +13,7 @@ A production-ready Next.js 15 dashboard for GitanAI operators to capture, audit,
    ```bash
    npm install
    ```
-2. Create `.env.local` using [.env.example](./.env.example) and set a 32+ character `CLIENT_ENCRYPTION_KEY`. Optional: point `CLIENTS_DATA_DIR` to a secure path outside the repo.
+2. Create `.env.local` using [.env.example](./.env.example) and set a 32+ character `CLIENT_ENCRYPTION_KEY` plus `POSTGRES_URL` (Vercel Postgres or your own database).
 3. Start the dashboard:
    ```bash
    npm run dev
@@ -32,7 +32,7 @@ A production-ready Next.js 15 dashboard for GitanAI operators to capture, audit,
 | Variable | Required | Description |
 | --- | --- | --- |
 | `CLIENT_ENCRYPTION_KEY` | Yes | Secret used to derive the AES-256 key that encrypts every stored password. Generate via `openssl rand -hex 32`. |
-| `CLIENTS_DATA_DIR` | Optional | Absolute directory for `clients.json`. Defaults to `<project>/data` when omitted. |
+| `POSTGRES_URL` | Yes | Connection string for the Postgres instance (Vercel Postgres, Neon, Supabase, etc.). |
 
 ## Operational Flow
 1. **Ingest / Create** – Fill the form on the right with client + org metadata, password/token, and operational notes. On submit (`POST /api/clients`) the password is encrypted, deduplicated by email, and the table refreshes instantly.
@@ -53,9 +53,9 @@ A production-ready Next.js 15 dashboard for GitanAI operators to capture, audit,
 The API always responds with `{ client }`, `{ clients }`, or `{ message }` envelopes. Validation failures surface as `400/422`, missing records emit `404`, and unexpected errors return `500`.
 
 ## Data & Security
-- Client data lives in `clients.json` within the configured data directory. Reads/writes run through a PID-based lock file to prevent corruption during concurrent deployments.
-- Secrets are encrypted with AES-256-GCM before touching disk. Only the API layer decrypts them when responding to authenticated requests.
-- Legacy plain-text data is ignored to avoid leaking previously compromised secrets; re-import records through the UI to re-encrypt.
+- Client data lives in the `gitan_clients` table inside Postgres. The API lazily creates the table/index if they do not exist, which makes local setup easy.
+- Secrets are encrypted with AES-256-GCM before being inserted. Only the API layer decrypts them when responding to authenticated requests.
+- To migrate older `clients.json` data, run the dashboard locally with both the JSON file and Postgres configured, then manually re-enter each record so it is re-encrypted.
 - UI copy actions rely on the browser Clipboard API and gracefully degrade when unavailable.
 
 ## Testing Scenarios
