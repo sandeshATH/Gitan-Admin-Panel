@@ -1,37 +1,28 @@
 ﻿import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import bcrypt from "bcryptjs";
-import { PLAN_OPTIONS, STATUS_OPTIONS, type ClientPlan, type ClientStatus } from "./client-options";
+import {
+  PLAN_OPTIONS,
+  STATUS_OPTIONS,
+  type ClientPlan,
+  type ClientStatus,
+} from "./client-options";
+import { decryptSecret, encryptSecret } from "./crypto";
+import type {
+  ClientCreateInput,
+  ClientRecord,
+  ClientUpdateInput,
+} from "@/types/client";
 
 export type { ClientPlan, ClientStatus };
 
-export type ClientRecord = {
-  id: string;
-  name: string;
-  company?: string;
-  email: string;
-  phone?: string;
-  plan: ClientPlan;
-  status: ClientStatus;
-  password: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
+type StoredClientRecord = Omit<ClientRecord, "password"> & {
+  passwordCiphertext: string;
 };
 
-export type ClientInput = {
-  name: string;
-  email: string;
-  password: string;
-  notes?: string;
-  company?: string;
-  phone?: string;
-  plan?: string;
-  status?: string;
-};
-
-const dataDir = path.join(process.cwd(), "data");
+const dataDir = process.env.CLIENTS_DATA_DIR
+  ? path.resolve(process.env.CLIENTS_DATA_DIR)
+  : path.join(process.cwd(), "data");
 const clientsFile = path.join(dataDir, "clients.json");
 const lockFile = `${clientsFile}.lock`;
 
@@ -55,7 +46,7 @@ async function acquireLock(retries = 20, delay = 100) {
         await handle.close();
       }
       return;
-    } catch (err) {
+    } catch {
       // If lock exists, check if it's stale and remove it
       try {
         const stat = await fs.stat(lockFile);
@@ -65,7 +56,7 @@ async function acquireLock(retries = 20, delay = 100) {
           // try immediately again
           continue;
         }
-      } catch (_statErr) {
+      } catch {
         // ignore stat errors and fall through to wait
       }
 
@@ -80,7 +71,7 @@ async function acquireLock(retries = 20, delay = 100) {
 async function releaseLock() {
   try {
     await fs.unlink(lockFile);
-  } catch (_err) {
+  } catch {
     // ignore
   }
 }
@@ -101,18 +92,33 @@ function normalizeStatus(status: string | undefined): ClientStatus {
   return match ?? "Pending";
 }
 
-function normalizeClient(raw: unknown): ClientRecord | null {
+function normalizeStoredClient(raw: unknown): StoredClientRecord | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
 
-  const candidate = raw as Partial<ClientRecord> & { id?: string };
-  if (!candidate.id || !candidate.name || !candidate.email || !candidate.password) {
+  const candidate = raw as Partial<StoredClientRecord> & {
+    id?: string;
+    passwordCiphertext?: string;
+  };
+  if (
+    !candidate.id ||
+    !candidate.name ||
+    !candidate.email ||
+    (!candidate.passwordCiphertext && !(candidate as { password?: string }).password)
+  ) {
     return null;
   }
 
   const createdAt = candidate.createdAt ?? new Date().toISOString();
   const updatedAt = candidate.updatedAt ?? createdAt;
+  const passwordCiphertext =
+    candidate.passwordCiphertext ??
+    (candidate as { password?: string }).password;
+
+  if (!passwordCiphertext) {
+    return null;
+  }
 
   return {
     id: candidate.id,
@@ -122,14 +128,27 @@ function normalizeClient(raw: unknown): ClientRecord | null {
     phone: candidate.phone ?? "",
     plan: normalizePlan(candidate.plan),
     status: normalizeStatus(candidate.status),
-    password: candidate.password,
+    passwordCiphertext,
     notes: candidate.notes ?? "",
     createdAt,
     updatedAt,
   };
 }
 
-export async function readClients(): Promise<ClientRecord[]> {
+function toClientRecord(record: StoredClientRecord): ClientRecord | null {
+  try {
+    const password = decryptSecret(record.passwordCiphertext);
+    return {
+      ...record,
+      password,
+    };
+  } catch (error) {
+    console.error(`Unable to decrypt password for client ${record.id}`, error);
+    return null;
+  }
+}
+
+async function readStoredClientsUnsafe(): Promise<StoredClientRecord[]> {
   await ensureDataFile();
   const raw = await fs.readFile(clientsFile, "utf-8");
   try {
@@ -138,27 +157,38 @@ export async function readClients(): Promise<ClientRecord[]> {
       return [];
     }
     return parsed
-      .map((item) => normalizeClient(item))
-      .filter((item): item is ClientRecord => Boolean(item))
+      .map((item) => normalizeStoredClient(item))
+      .filter((item): item is StoredClientRecord => Boolean(item))
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   } catch {
     return [];
   }
 }
 
-async function writeClients(clients: ClientRecord[]) {
+async function writeStoredClientsUnsafe(clients: StoredClientRecord[]) {
   await ensureDataFile();
-  await acquireLock();
   const tmp = `${clientsFile}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(clients, null, 2), "utf-8");
+  await fs.rename(tmp, clientsFile);
+}
+
+async function runWithClientLock<T>(operation: () => Promise<T>) {
+  await acquireLock();
   try {
-    await fs.writeFile(tmp, JSON.stringify(clients, null, 2), "utf-8");
-    await fs.rename(tmp, clientsFile);
+    return await operation();
   } finally {
     await releaseLock();
   }
 }
 
-export async function addClient(input: ClientInput) {
+export async function readClients(): Promise<ClientRecord[]> {
+  const stored = await readStoredClientsUnsafe();
+  return stored
+    .map((record) => toClientRecord(record))
+    .filter((item): item is ClientRecord => Boolean(item));
+}
+
+export async function addClient(input: ClientCreateInput) {
   const trimmedName = input.name.trim();
   const trimmedEmail = input.email.trim().toLowerCase();
   const password = input.password.trim();
@@ -180,14 +210,8 @@ export async function addClient(input: ClientInput) {
     throw new Error("A password is required.");
   }
 
-  const clients = await readClients();
   const now = new Date().toISOString();
-
-  if (clients.some((client) => client.email === trimmedEmail)) {
-    throw new Error("A client with this email already exists.");
-  }
-
-  const newClient: ClientRecord = {
+  const storedClient: StoredClientRecord = {
     id: randomUUID(),
     name: trimmedName,
     company,
@@ -195,40 +219,34 @@ export async function addClient(input: ClientInput) {
     phone,
     plan,
     status,
-    password: bcrypt.hashSync(password, 10),
+    passwordCiphertext: encryptSecret(password),
     notes,
     createdAt: now,
     updatedAt: now,
   };
 
-  const updated = [newClient, ...clients];
-  await writeClients(updated);
-  return newClient;
+  const plainRecord: ClientRecord = {
+    ...storedClient,
+    password,
+  };
+
+  await runWithClientLock(async () => {
+    const clients = await readStoredClientsUnsafe();
+
+    if (clients.some((client) => client.email === trimmedEmail)) {
+      throw new Error("A client with this email already exists.");
+    }
+
+    const updated = [storedClient, ...clients];
+    await writeStoredClientsUnsafe(updated);
+  });
+
+  return plainRecord;
 }
 
 export async function removeClient(id: string) {
-  await acquireLock();
-  try {
-    await ensureDataFile();
-    const raw = await fs.readFile(clientsFile, "utf-8");
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (parseErr) {
-      // If the file is corrupted, attempt to recover with an empty list
-      console.error("clients.json corrupted, recovering to empty array", parseErr);
-      parsed = [];
-    }
-
-    let arr: unknown[] = [];
-    if (Array.isArray(parsed)) {
-      arr = parsed as unknown[];
-    }
-
-    const clients: ClientRecord[] = arr
-      .map((item: unknown) => normalizeClient(item))
-      .filter((item): item is ClientRecord => Boolean(item));
-
+  return runWithClientLock(async () => {
+    const clients = await readStoredClientsUnsafe();
     const updated = clients.filter((client) => client.id !== id);
     const removed = updated.length !== clients.length;
 
@@ -236,9 +254,96 @@ export async function removeClient(id: string) {
       return { removed: false };
     }
 
-    await writeClients(updated);
+    await writeStoredClientsUnsafe(updated);
     return { removed: true };
-  } finally {
-    await releaseLock();
+  });
+}
+
+export async function updateClient(input: ClientUpdateInput) {
+  const trimmedId = input.id?.trim();
+  if (!trimmedId) {
+    throw new Error("Client id is required.");
   }
+
+  return runWithClientLock(async () => {
+    const clients = await readStoredClientsUnsafe();
+    const index = clients.findIndex((client) => client.id === trimmedId);
+
+    if (index === -1) {
+      throw new Error("Client not found.");
+    }
+
+    const existing = clients[index];
+
+    const name =
+      typeof input.name === "string" ? input.name.trim() : existing.name;
+    if (!name) {
+      throw new Error("Client name is required.");
+    }
+
+    const email =
+      typeof input.email === "string"
+        ? input.email.trim().toLowerCase()
+        : existing.email;
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error("A valid email address is required.");
+    }
+
+    if (
+      clients.some(
+        (client, idx) => idx !== index && client.email.toLowerCase() === email
+      )
+    ) {
+      throw new Error("A client with this email already exists.");
+    }
+
+    const plan = normalizePlan(input.plan ?? existing.plan);
+    const status = normalizeStatus(input.status ?? existing.status);
+    const company =
+      typeof input.company === "string"
+        ? input.company.trim()
+        : existing.company;
+    const phone =
+      typeof input.phone === "string" ? input.phone.trim() : existing.phone;
+    const notes =
+      typeof input.notes === "string" ? input.notes.trim() : existing.notes;
+
+    let passwordCiphertext = existing.passwordCiphertext;
+    let password: string | undefined;
+
+    if (typeof input.password === "string") {
+      const trimmed = input.password.trim();
+      if (!trimmed) {
+        throw new Error("Password cannot be empty.");
+      }
+      passwordCiphertext = encryptSecret(trimmed);
+      password = trimmed;
+    }
+
+    const updatedAt = new Date().toISOString();
+    const updatedRecord: StoredClientRecord = {
+      ...existing,
+      name,
+      email,
+      plan,
+      status,
+      company,
+      phone,
+      notes,
+      updatedAt,
+      passwordCiphertext,
+    };
+
+    clients[index] = updatedRecord;
+    await writeStoredClientsUnsafe(clients);
+
+    const resolvedPassword =
+      password ?? decryptSecret(existing.passwordCiphertext);
+
+    return {
+      ...updatedRecord,
+      password: resolvedPassword,
+    };
+  });
 }

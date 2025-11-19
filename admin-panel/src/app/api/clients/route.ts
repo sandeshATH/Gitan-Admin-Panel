@@ -1,18 +1,12 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import { addClient, readClients, removeClient } from "@/lib/clients";
-import type { ClientRecord } from "@/lib/clients";
+import { addClient, readClients, removeClient, updateClient } from "@/lib/clients";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
     const clients = await readClients();
-    const safe = clients.map((c) => {
-      const { password, ...rest } = c;
-      void password;
-      return rest;
-    });
-    return NextResponse.json({ clients: safe });
+    return NextResponse.json({ clients });
   } catch (error) {
     console.error("Failed to load clients", error);
     return NextResponse.json(
@@ -26,9 +20,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const client = await addClient(body);
-    const { password, ...safeClient } = client as ClientRecord;
-    void password;
-    return NextResponse.json({ client: safeClient }, { status: 201 });
+    return NextResponse.json({ client }, { status: 201 });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unable to add client.";
@@ -62,5 +54,19 @@ export async function DELETE(request: NextRequest) {
       { message: "Unable to remove client." },
       { status: 500 }
     );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const payload = await request.json();
+    const client = await updateClient(payload);
+    return NextResponse.json({ client });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unable to update client.";
+    const status =
+      message === "Client not found." ? 404 : message.includes("required") ? 400 : 422;
+    return NextResponse.json({ message }, { status });
   }
 }
