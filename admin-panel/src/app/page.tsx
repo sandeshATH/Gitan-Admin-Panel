@@ -1200,69 +1200,59 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      {sidebarOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-sm"
-            onClick={() => setSidebarOpen(false)}
-          />
-          <aside className="fixed inset-y-0 left-0 z-40 w-72 translate-x-0 transform space-y-6 rounded-r-3xl border-r border-slate-200 bg-white p-6 shadow-xl transition-transform">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">GITANAI OPS</p>
-                <h2 className="text-2xl font-semibold text-slate-900">Control Center</h2>
-                <p className="text-sm text-slate-500">Switch between revenue, delivery, and content tracks.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(false)}
-                className="rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
-                aria-label="Close navigation"
-              >
-                ✕
-              </button>
-            </div>
-            <nav className="space-y-2">
-              {navItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => handleNavClick(item.id)}
-                  className={`flex w-full flex-col rounded-2xl border px-4 py-3 text-left transition ${
-                    activeNav === item.id
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                  }`}
-                >
-                  <span className="text-xs uppercase tracking-[0.3em] text-slate-400">
-                    {item.description}
-                  </span>
-                  <span className="text-sm font-semibold">{item.label}</span>
-                </button>
-              ))}
-            </nav>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
-              <p className="font-semibold text-slate-700">Production checklist</p>
-              <ul className="mt-3 space-y-2">
-                <li>• Client passwords encrypted in Neon</li>
-                <li>• Blog drafts staged before publishing</li>
-                <li>• Manual QA before pushing new posts</li>
-              </ul>
-            </div>
-          </aside>
-        </>
-      )}
-
-      <div className="mx-auto w-full max-w-7xl px-4 pb-10 pt-6 sm:px-6 lg:px-8">
-        <div className="mb-8 flex items-center justify-between">
+      <div className="relative">
+        <aside
+          className={`fixed inset-y-0 left-0 z-40 w-72 space-y-6 rounded-r-3xl border-r border-slate-200 bg-white p-6 shadow-xl transition-transform duration-300 ${
+            sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+        <div className="lg:block">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">GITANAI</p>
-            <p className="text-base font-semibold text-slate-900">Admin Control</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">GITANAI OPS</p>
+            <h2 className="text-2xl font-semibold text-slate-900">Control Center</h2>
+            <p className="text-sm text-slate-500">Switch between revenue, delivery, and content tracks.</p>
           </div>
+        </div>
+        <nav className="space-y-2">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => handleNavClick(item.id)}
+              className={`flex w-full flex-col rounded-2xl border px-4 py-3 text-left transition ${
+                activeNav === item.id
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <span className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                {item.description}
+              </span>
+              <span className="text-sm font-semibold">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
+          <p className="font-semibold text-slate-700">Production checklist</p>
+          <ul className="mt-3 space-y-2">
+            <li>• Client passwords encrypted in Neon</li>
+            <li>• Blog drafts staged before publishing</li>
+            <li>• Manual QA before pushing new posts</li>
+          </ul>
+        </div>
+      </aside>
+
+        <div
+          className={`relative z-10 mx-auto w-full max-w-7xl px-4 pb-10 pt-6 transition-[margin] duration-300 sm:px-6 ${
+            sidebarOpen ? "ml-72" : "ml-0"
+          }`}
+        >
+          <div className="mb-8 flex items-center gap-4">
           <button
             type="button"
-            onClick={() => setSidebarOpen(true)}
+            onClick={() => setSidebarOpen((prev) => !prev)}
             className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:border-slate-300"
+            aria-label="Toggle navigation"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -1276,13 +1266,18 @@ export default function AdminDashboard() {
             </svg>
             Menu
           </button>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">GITANAI</p>
+            <p className="text-base font-semibold text-slate-900">Admin Control</p>
+          </div>
         </div>
 
-        <main className="space-y-10">
-          {activeNav === "overview" && <OverviewSection />}
-          {activeNav === "clients" && <ClientsSection />}
-          {activeNav === "blog" && <BlogSection />}
-        </main>
+          <main className="space-y-10">
+            {activeNav === "overview" && <OverviewSection />}
+            {activeNav === "clients" && <ClientsSection />}
+            {activeNav === "blog" && <BlogSection />}
+          </main>
+        </div>
       </div>
     </div>
   );
