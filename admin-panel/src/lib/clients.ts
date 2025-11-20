@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { sql } from "@vercel/postgres";
+import { createPool } from "@vercel/postgres";
 import {
   PLAN_OPTIONS,
   STATUS_OPTIONS,
@@ -31,6 +31,32 @@ type ClientRow = {
 
 let ensureTablePromise: Promise<void> | null = null;
 
+type Pool = ReturnType<typeof createPool>;
+let pool: Pool | null = null;
+
+function getPool() {
+  if (pool) {
+    return pool;
+  }
+
+  const connectionString =
+    process.env.POSTGRES_URL ??
+    process.env.POSTGRES_PRISMA_URL ??
+    process.env.POSTGRES_URL_NON_POOLING ??
+    process.env.POSTGRES_URL_NO_SSL ??
+    process.env.DATABASE_URL ??
+    "";
+
+  if (!connectionString) {
+    throw new Error(
+      "POSTGRES_URL (or DATABASE_URL) env var is required. Update your .env.local before starting the server."
+    );
+  }
+
+  pool = createPool({ connectionString });
+  return pool;
+}
+
 function normalizePlan(plan: string | undefined): ClientPlan {
   if (!plan) return "Starter";
   const match = PLAN_OPTIONS.find(
@@ -50,7 +76,7 @@ function normalizeStatus(status: string | undefined): ClientStatus {
 async function ensureClientsTable() {
   if (!ensureTablePromise) {
     ensureTablePromise = (async () => {
-      await sql`
+      await getPool().sql`
         CREATE TABLE IF NOT EXISTS gitan_clients (
           id uuid PRIMARY KEY,
           name text NOT NULL,
@@ -65,7 +91,7 @@ async function ensureClientsTable() {
           updated_at timestamptz NOT NULL DEFAULT NOW()
         )
       `;
-      await sql`
+      await getPool().sql`
         CREATE UNIQUE INDEX IF NOT EXISTS gitan_clients_email_lower_idx
         ON gitan_clients ((lower(email)))
       `;
@@ -106,7 +132,7 @@ function mapRowToClient(row: ClientRow): ClientRecord | null {
 
 export async function readClients(): Promise<ClientRecord[]> {
   await ensureClientsTable();
-  const result = await sql<ClientRow>`
+  const result = await getPool().sql<ClientRow>`
     SELECT *
     FROM gitan_clients
     ORDER BY created_at DESC
@@ -139,7 +165,7 @@ export async function addClient(input: ClientCreateInput) {
   try {
     const ciphertext = encryptSecret(password);
     const now = new Date().toISOString();
-    const result = await sql<ClientRow>`
+    const result = await getPool().sql<ClientRow>`
       INSERT INTO gitan_clients
         (id, name, company, email, phone, plan, status, password_ciphertext, notes, created_at, updated_at)
       VALUES
@@ -161,12 +187,13 @@ export async function addClient(input: ClientCreateInput) {
 
 export async function removeClient(id: string) {
   await ensureClientsTable();
-  const result = await sql`
+  const result = await getPool().sql`
     DELETE FROM gitan_clients
     WHERE id = ${id}
     RETURNING id
   `;
-  return { removed: result.rowCount > 0 };
+  const removed = (result.rowCount ?? 0) > 0;
+  return { removed };
 }
 
 export async function updateClient(input: ClientUpdateInput) {
@@ -177,7 +204,7 @@ export async function updateClient(input: ClientUpdateInput) {
 
   await ensureClientsTable();
 
-  const existingResult = await sql<ClientRow>`
+  const existingResult = await getPool().sql<ClientRow>`
     SELECT *
     FROM gitan_clients
     WHERE id = ${trimmedId}
@@ -223,7 +250,7 @@ export async function updateClient(input: ClientUpdateInput) {
   const updatedAt = new Date().toISOString();
 
   try {
-    const result = await sql<ClientRow>`
+    const result = await getPool().sql<ClientRow>`
       UPDATE gitan_clients
       SET
         name = ${name},
