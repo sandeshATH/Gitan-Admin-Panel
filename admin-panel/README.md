@@ -7,6 +7,7 @@ A production-ready Next.js 15 dashboard for GitanAI operators to capture, audit,
 - Tailwind CSS 4 for theming
 - Vercel Postgres (or any Postgres-compatible DB) with AES-256-GCM encryption for secrets
 - TypeScript end-to-end for shared domain contracts
+- Blog editor tooling to manage gitanai.co content alongside client ops
 
 ## Quick Start
 1. Install dependencies inside `admin-panel`:
@@ -39,8 +40,9 @@ A production-ready Next.js 15 dashboard for GitanAI operators to capture, audit,
 2. **Search & Filter** – Use the global search bar or status filter chips to find accounts by name, company, plan, status, or note keywords. Metrics cards stay in sync with the filtered dataset.
 3. **Reveal / Copy** – Each row masks the password by default. Click **Reveal** to temporarily display, or **Copy** to push the decrypted secret to the OS clipboard.
 4. **Edit / Update** – Press **Edit** in any row to load details back into the form. Update plan/status/notes, optionally change the password, and save (`PATCH /api/clients`). Leaving the password blank keeps the existing secret.
-5. **Remove / Offboard** – Use **Remove** to delete a record (`DELETE /api/clients?id=...`). Deleting a client that is being edited automatically cancels the edit session.
-6. **Auditing** – Recent additions surface at the top of the hero panel, and timestamps render with locale-friendly formatting for traceability.
+5. **Manage Blog Content** – Switch to the Blog section to draft, review, publish, or archive posts that power gitanai.co/blog.
+6. **Remove / Offboard** – Use **Remove** to delete a record (`DELETE /api/clients?id=...`). Deleting a client that is being edited automatically cancels the edit session.
+7. **Auditing** – Recent additions surface at the top of the hero panel, and timestamps render with locale-friendly formatting for traceability.
 
 ## API Surface
 | Method | Path | Purpose |
@@ -49,6 +51,10 @@ A production-ready Next.js 15 dashboard for GitanAI operators to capture, audit,
 | `POST` | `/api/clients` | Creates a client. Validates presence of name/email/password and enforces unique emails. |
 | `PATCH` | `/api/clients` | Updates an existing client. Accepts the client `id` plus any subset of editable fields; optional password updates trigger re-encryption. |
 | `DELETE` | `/api/clients?id=CLIENT_ID` | Removes a client if it exists. |
+| `GET` | `/api/posts` | Lists blog posts ordered by recency. |
+| `POST` | `/api/posts` | Creates a blog post (title + slug + status, optional publish time). |
+| `PATCH` | `/api/posts` | Updates title/slug/status/content for an existing blog post. |
+| `DELETE` | `/api/posts?id=POST_ID` | Removes a blog post. |
 
 The API always responds with `{ client }`, `{ clients }`, or `{ message }` envelopes. Validation failures surface as `400/422`, missing records emit `404`, and unexpected errors return `500`.
 
